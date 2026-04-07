@@ -5,11 +5,35 @@ use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::net::UnixStream;
 
+pub struct SandboxConfig {
+    pub kernel_path: String,
+    pub rootfs_path: String,
+    pub tap_name: String,
+    pub mac: String,
+    pub guest_ip: String,
+    pub gateway_ip: String,
+}
+
 pub struct FirecrackerClient {
     socket_path: String,
 }
 
 impl FirecrackerClient {
+    pub async fn launch(&self, config: &SandboxConfig) -> Result<()> {
+        let boot_args = format!(
+            "console=ttyS0 reboot=k panic=1 ip={}::{}:255.255.255.0::eth0:off",
+            config.guest_ip, config.gateway_ip
+        );
+
+        self.configure_boot(&config.kernel_path, &boot_args).await?;
+        self.configure_drive(&config.rootfs_path).await?;
+        self.configure_network(&config.tap_name, &config.mac)
+            .await?;
+        self.start().await?;
+
+        Ok(())
+    }
+
     pub fn new(socket_path: &str) -> Self {
         Self {
             socket_path: socket_path.to_string(),
@@ -50,7 +74,7 @@ impl FirecrackerClient {
         .await
     }
 
-    pub async fn configure_device(&self, rootfs_path: &str) -> Result<()> {
+    pub async fn configure_drive(&self, rootfs_path: &str) -> Result<()> {
         self.put(
             "/drives/rootfs",
             json!({
@@ -65,7 +89,7 @@ impl FirecrackerClient {
 
     pub async fn configure_network(&self, tap_name: &str, mac: &str) -> Result<()> {
         self.put(
-            "/network-interface/eth0",
+            "/network-interfaces/eth0",
             json!({
                 "iface_id": "eth0",
                 "guest_mac": mac,
