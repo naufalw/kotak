@@ -17,6 +17,8 @@ pub struct SandboxConfig {
     pub mac: String,
     pub guest_ip: String,
     pub gateway_ip: String,
+    pub guest_cid: u32,
+    pub vsock_path: String, // UDS on host machine
 }
 
 pub struct FirecrackerClient {
@@ -33,6 +35,8 @@ impl FirecrackerClient {
         self.configure_boot(&config.kernel_path, &boot_args).await?;
         self.configure_drive(&config.rootfs_path).await?;
         self.configure_network(&config.tap_name, &config.mac)
+            .await?;
+        self.configure_vsock(config.guest_cid, &config.vsock_path)
             .await?;
         self.start().await?;
         self.wait_for_ssh(&config.guest_ip).await?;
@@ -101,6 +105,17 @@ impl FirecrackerClient {
                 "guest_mac": mac,
                 "host_dev_name": tap_name
 
+            }),
+        )
+        .await
+    }
+
+    pub async fn configure_vsock(&self, guest_cid: u32, uds_path: &str) -> Result<()> {
+        self.put(
+            "/vsock",
+            json!({
+                "guest_cid": guest_cid,
+                "uds_path": uds_path
             }),
         )
         .await

@@ -25,6 +25,8 @@ async fn main() -> Result<()> {
         mac: "AA:FC:00:00:00:01".to_string(),
         guest_ip: net.guest_ip.clone(),
         gateway_ip: net.host_ip.clone(),
+        guest_cid: 3,
+        vsock_path: fc_process.vsock_path.clone(),
     };
 
     let fc = FirecrackerClient::new(&fc_process.socket_path);

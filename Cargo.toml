@@ -1,6 +1,6 @@
 [workspace]
 members = [
     "crates/kotak-common",
-    "crates/kotak-agent",
+    "crates/kotak-agent", "crates/kotak-guest",
 ]
 resolver = "2"
