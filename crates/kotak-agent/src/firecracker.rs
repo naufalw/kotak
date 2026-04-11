@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use http_body_util::Full;
 use hyper::{Method, Request, body::Bytes};
 use hyper_util::rt::TokioIo;
 use serde_json::json;
-use tokio::net::UnixStream;
+use tokio::{
+    net::{TcpStream, UnixStream},
+    time::sleep,
+};
 
 pub struct SandboxConfig {
     pub kernel_path: String,
@@ -30,6 +35,7 @@ impl FirecrackerClient {
         self.configure_network(&config.tap_name, &config.mac)
             .await?;
         self.start().await?;
+        self.wait_for_ssh(&config.guest_ip).await?;
 
         Ok(())
     }
@@ -108,5 +114,24 @@ impl FirecrackerClient {
             }),
         )
         .await
+    }
+
+    pub async fn wait_for_ssh(&self, guest_ip: &str) -> Result<()> {
+        let addr = format!("{}:22", guest_ip);
+        tracing::info!("waiting vm ready");
+
+        for attempt in 1..=30 {
+            match TcpStream::connect(&addr).await {
+                Ok(_) => {
+                    tracing::info!("VM ready after {} attempts", attempt);
+                    return Ok(());
+                }
+                Err(_) => {
+                    tracing::debug!("Attempt {} fail, retry", attempt);
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+        Ok(())
     }
 }
