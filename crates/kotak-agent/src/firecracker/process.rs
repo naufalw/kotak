@@ -22,11 +22,14 @@ impl FirecrackerProcess {
 
         for _ in 0..20 {
             if tokio::fs::metadata(&socket_path).await.is_ok() {
-                break;
+                return Ok(Self { child, socket_path });
             }
             sleep(Duration::from_millis(50)).await;
         }
 
-        Ok(Self { child, socket_path })
+        Err(anyhow::anyhow!(
+            "firecracker socket never appeared at {}",
+            socket_path
+        ))
     }
 }
