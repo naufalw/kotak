@@ -1,0 +1,19 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: rustfs
+    user: "0:0"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./rustfs/data:/data
+      - ./rustfs/logs:/logs
+    environment:
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=admin
+      - RUSTFS_SECRET_KEY=secret
+    command: ["--console-enable", "/data"]
+    restart: unless-stopped
