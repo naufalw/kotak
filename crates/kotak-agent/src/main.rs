@@ -6,8 +6,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = SandboxConfig {
-        kernel_path: "./hello-vmlinux.bin".to_string(),
-        rootfs_path: "./hello-rootfs.ext4".to_string(),
+        kernel_path: "./vmlinux-6.1.155.bin".to_string(),
+        rootfs_path: "./rootfs.ext4".to_string(),
         tap_name: "tap0".to_string(),
         mac: "AA:FC:00:00:00:01".to_string(),
         guest_ip: "172.16.0.2".to_string(),
@@ -17,6 +17,5 @@ async fn main() -> Result<()> {
     let fc = FirecrackerClient::new("/tmp/firecracker.socket");
     fc.launch(&config).await?;
 
-    tracing::info!("VM is up at {}", config.guest_ip);
     Ok(())
 }

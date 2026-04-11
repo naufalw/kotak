@@ -26,7 +26,7 @@ pub struct FirecrackerClient {
 impl FirecrackerClient {
     pub async fn launch(&self, config: &SandboxConfig) -> Result<()> {
         let boot_args = format!(
-            "console=ttyS0 reboot=k panic=1 ip={}::{}:255.255.255.0::eth0:off",
+            "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init random.trust_cpu=on ip={}::{}:255.255.255.0::eth0:off",
             config.guest_ip, config.gateway_ip
         );
 
@@ -124,6 +124,7 @@ impl FirecrackerClient {
             match TcpStream::connect(&addr).await {
                 Ok(_) => {
                     tracing::info!("VM ready after {} attempts", attempt);
+                    tracing::info!("VM is up at {}", guest_ip);
                     return Ok(());
                 }
                 Err(_) => {
