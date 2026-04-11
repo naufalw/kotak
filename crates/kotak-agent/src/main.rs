@@ -32,6 +32,11 @@ async fn main() -> Result<()> {
     let fc = FirecrackerClient::new(&fc_process.socket_path);
     fc.launch(&config).await?;
 
+    let response = fc.exec(&config.vsock_path, "uname -a").await?;
+    tracing::info!("stdout: {}", response.stdout);
+    tracing::info!("stderr: {}", response.stderr);
+    tracing::info!("exit_code: {}", response.exit_code);
+
     std::future::pending::<()>().await;
 
     Ok(())
