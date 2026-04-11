@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use tokio::sync::Mutex;
 
+use crate::cmd::run_cmd;
+
 // Every sandbox gets /30 => 2 usable
 // 172.16.{slot}.0/30
 //   host (gateway): 172.16.{slot}.1
@@ -57,28 +59,37 @@ pub struct TapNetwork {
 }
 
 pub async fn setup_tap(net: &TapNetwork) -> Result<()> {
-    tokio::process::Command::new("ip")
-        .args(["tuntap", "add", &net.tap_name, "mode", "tap"])
-        .status()
-        .await?;
+    // Cleanup old tap with this tap id
+    let _ = run_cmd(&["ip", "link", "del", &net.tap_name]).await;
 
-    tokio::process::Command::new("ip")
-        .args(["addr", "add", &net.cidr, "dev", &net.tap_name])
-        .status()
-        .await?;
+    // Create TAP
+    run_cmd(&["ip", "tuntap", "add", &net.tap_name, "mode", "tap"]).await?;
 
-    tokio::process::Command::new("ip")
-        .args(["link", "set", &net.tap_name, "up"])
-        .status()
-        .await?;
+    // Assign ip
+    run_cmd(&["ip", "addr", "add", &net.cidr, "dev", &net.tap_name]).await?;
+
+    // Bring up tap
+    run_cmd(&["ip", "link", "set", &net.tap_name, "up"]).await?;
+
+    // UFW
+    run_cmd(&["ufw", "route", "allow", "in", "on", &net.tap_name]).await?;
+    run_cmd(&["ufw", "route", "allow", "out", "on", &net.tap_name]).await?;
 
     Ok(())
 }
 
 pub async fn teardown_tap(net: &TapNetwork) -> Result<()> {
-    tokio::process::Command::new("ip")
-        .args(["link", "del", &net.tap_name])
-        .status()
-        .await?;
+    run_cmd(&["ufw", "route", "delete", "allow", "in", "on", &net.tap_name]).await?;
+    run_cmd(&[
+        "ufw",
+        "route",
+        "delete",
+        "allow",
+        "out",
+        "on",
+        &net.tap_name,
+    ])
+    .await?;
+    run_cmd(&["ip", "link", "del", &net.tap_name]).await?;
     Ok(())
 }
