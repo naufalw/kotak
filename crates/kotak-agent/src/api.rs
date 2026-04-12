@@ -1,20 +1,27 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use axum::{
     Json, Router,
     extract::{Path, State},
-    response::IntoResponse,
+    response::{
+        IntoResponse,
+        sse::{Event, Sse},
+    },
     routing::{delete, get, post},
 };
+use futures_util::StreamExt;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::RwLock;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     filesystem::FilesystemManager,
     network::{IpamAllocator, PortManager},
     sandbox::{Sandbox, SandboxConfig, resume},
     snapshot::SnapshotStore,
+    vsock::ExecChunk,
 };
 
 pub struct AppState {
@@ -32,6 +39,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sandboxes/create", post(create_sandbox))
         .route("/sandboxes/{id}", delete(delete_sandbox))
         .route("/sandboxes/{id}/exec", post(exec_sandbox))
+        .route("/sandboxes/{id}/exec/stream", post(exec_stream_sandbox))
         .route("/sandboxes/{id}/hibernate", post(hibernate_sandbox))
         .route("/sandboxes/{id}/ports/{port}", post(forward_port))
         .route("/sandboxes/{id}/ports/{port}", delete(remove_port))
@@ -127,6 +135,36 @@ async fn exec_sandbox(
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn exec_stream_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<ExecRequest>,
+) -> axum::response::Response {
+    let rx = {
+        let sandboxes = state.sandboxes.read().await;
+        match sandboxes.get(&id) {
+            Some(s) => s.exec_stream(&body.command).await,
+            None => return StatusCode::NOT_FOUND.into_response(),
+        }
+    };
+
+    match rx {
+        Ok(rx) => {
+            let stream = ReceiverStream::new(rx).map(|chunk| {
+                let data = match &chunk {
+                    ExecChunk::Stdout { data } => json!({"type": "stdout", "data": data}),
+                    ExecChunk::Stderr { data } => json!({"type": "stderr", "data": data}),
+                    ExecChunk::Exit { code } => json!({"type": "exit", "code": code}),
+                };
+
+                Ok::<Event, Infallible>(Event::default().data(data.to_string()))
+            });
+            Sse::new(stream).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 

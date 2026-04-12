@@ -1,14 +1,15 @@
 use crate::{
     filesystem::FilesystemManager,
     firecracker::{
-        client::{ExecResponse, FirecrackerClient, ResolvedConfig},
+        client::{FirecrackerClient, ResolvedConfig},
         process::FirecrackerProcess,
     },
     network::{IpamAllocator, PortForward, PortManager, TapNetwork, setup_tap, teardown_tap},
     snapshot::SnapshotStore,
+    vsock::{ExecChunk, ExecResponse, VsockClient},
 };
 use anyhow::Result;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 pub struct SandboxConfig {
     pub kernel_path: String,
@@ -21,6 +22,7 @@ pub struct Sandbox {
     pub port_forwards: Mutex<Vec<PortForward>>,
     process: FirecrackerProcess,
     client: FirecrackerClient,
+    vsock: VsockClient,
     fs: FilesystemManager,
 }
 
@@ -38,6 +40,7 @@ impl Sandbox {
 
         let process = FirecrackerProcess::spawn(id).await?;
         let client = FirecrackerClient::new(&process.socket_path);
+        let vsock = VsockClient::new(&process.vsock_path);
 
         let resolved = ResolvedConfig {
             kernel_path: &config.kernel_path,
@@ -51,11 +54,8 @@ impl Sandbox {
         };
 
         client.launch(&resolved).await?;
-        client
-            .exec(
-                &process.vsock_path,
-                "rm -f /etc/ssh/ssh_host_* && ssh-keygen -A && rc-service sshd restart",
-            )
+        vsock
+            .exec("rm -f /etc/ssh/ssh_host_* && ssh-keygen -A && rc-service sshd restart")
             .await?;
 
         Ok(Self {
@@ -64,12 +64,17 @@ impl Sandbox {
             client,
             net,
             fs,
+            vsock,
             port_forwards: Mutex::new(Vec::new()),
         })
     }
 
     pub async fn exec(&self, command: &str) -> Result<ExecResponse> {
-        self.client.exec(&self.process.vsock_path, command).await
+        self.vsock.exec(command).await
+    }
+
+    pub async fn exec_stream(&self, command: &str) -> Result<mpsc::Receiver<ExecChunk>> {
+        self.vsock.exec_stream(command).await
     }
 
     pub async fn hibernate(&self, store: &SnapshotStore) -> Result<()> {
@@ -115,6 +120,10 @@ impl Sandbox {
         self.fs.teardown(&self.id).await?;
         Ok(())
     }
+
+    pub fn vsock_path(&self) -> &str {
+        &self.process.vsock_path
+    }
 }
 
 pub async fn resume(
@@ -134,6 +143,7 @@ pub async fn resume(
 
     let process = FirecrackerProcess::spawn(id).await?;
     let client = FirecrackerClient::new(&process.socket_path);
+    let vsock = VsockClient::new(&process.vsock_path);
 
     let resolved = ResolvedConfig {
         kernel_path: &config.kernel_path,
@@ -154,6 +164,7 @@ pub async fn resume(
         client,
         net,
         fs,
+        vsock,
         port_forwards: Mutex::new(Vec::new()),
     })
 }
