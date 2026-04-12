@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     response::IntoResponse,
-    routing::{delete, post},
+    routing::{delete, get, post},
 };
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,8 @@ pub struct AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/sandboxes", post(create_sandbox))
+        .route("/sandboxes", get(list_sandboxes))
+        .route("/sandboxes/create", post(create_sandbox))
         .route("/sandboxes/{id}", delete(delete_sandbox))
         .route("/sandboxes/{id}/exec", post(exec_sandbox))
         .route("/sandboxes/{id}/hibernate", post(hibernate_sandbox))
@@ -57,6 +58,17 @@ struct ExecResponse {
 
 // handlers
 //
+async fn list_sandboxes(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let sandboxes = state.sandboxes.lock().await;
+    let list: Vec<SandboxResponse> = sandboxes
+        .values()
+        .map(|s| SandboxResponse {
+            id: s.id.clone(),
+            guest_ip: s.net.guest_ip.clone(),
+        })
+        .collect();
+    Json(list).into_response()
+}
 
 async fn create_sandbox(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let id = uuid::Uuid::new_v4().to_string();
@@ -130,6 +142,10 @@ async fn resume_sandbox(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if state.sandboxes.lock().await.contains_key(&id) {
+        return (StatusCode::CONFLICT, "sandbox already running").into_response();
+    }
+
     let fs = FilesystemManager::new(&state.base_rootfs);
     match resume(&id, &state.ipam, fs, &state.store, &state.config).await {
         Ok(sbx) => {
