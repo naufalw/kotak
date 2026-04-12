@@ -41,3 +41,11 @@ impl FirecrackerProcess {
         ))
     }
 }
+
+impl Drop for FirecrackerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+        let _ = std::fs::remove_file(&self.socket_path);
+        let _ = std::fs::remove_file(&self.vsock_path);
+    }
+}
