@@ -175,7 +175,10 @@ async fn hibernate_sandbox(
     let sandbox = state.sandboxes.write().await.remove(&id);
 
     match sandbox {
-        Some(s) => match s.hibernate(&state.store).await {
+        Some(s) => match s
+            .hibernate(&state.store, &state.ipam, &state.port_manager)
+            .await
+        {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },

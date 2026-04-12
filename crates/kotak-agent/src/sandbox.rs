@@ -1,3 +1,11 @@
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::{
     filesystem::FilesystemManager,
     firecracker::{
@@ -20,6 +28,7 @@ pub struct Sandbox {
     pub id: String,
     pub net: TapNetwork,
     pub port_forwards: Mutex<Vec<PortForward>>,
+    pub last_active: Arc<AtomicU64>,
     process: FirecrackerProcess,
     client: FirecrackerClient,
     vsock: VsockClient,
@@ -65,25 +74,42 @@ impl Sandbox {
             net,
             fs,
             vsock,
+            last_active: Arc::new(AtomicU64::new(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            )),
             port_forwards: Mutex::new(Vec::new()),
         })
     }
 
     pub async fn exec(&self, command: &str) -> Result<ExecResponse> {
+        self.touch();
         self.vsock.exec(command).await
     }
 
     pub async fn exec_stream(&self, command: &str) -> Result<mpsc::Receiver<ExecChunk>> {
+        self.touch();
         self.vsock.exec_stream(command).await
     }
 
-    pub async fn hibernate(&self, store: &SnapshotStore) -> Result<()> {
+    pub async fn hibernate(
+        self,
+        store: &SnapshotStore,
+        ipam: &IpamAllocator,
+        port_manager: &PortManager,
+    ) -> Result<()> {
         self.client.stop().await?;
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         store
             .snapshot_filesystem(&self.id, &self.fs.rootfs_path(&self.id))
             .await?;
-        Ok(())
+        self.destroy(ipam, port_manager).await
+    }
+
+    pub fn last_active_secs(&self) -> u64 {
+        self.last_active.load(Ordering::Relaxed)
     }
 
     pub async fn forward_port(&self, port_manager: &PortManager, guest_port: u16) -> Result<u16> {
@@ -109,7 +135,16 @@ impl Sandbox {
         Ok(())
     }
 
+    pub fn touch(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.last_active.store(now, Ordering::Relaxed);
+    }
+
     pub async fn destroy(self, ipam: &IpamAllocator, port_manager: &PortManager) -> Result<()> {
+        let _ = self.client.stop().await;
         for fwd in self.port_forwards.lock().await.iter() {
             let _ = port_manager
                 .remove(fwd.host_port, &self.net.guest_ip, fwd.guest_port)
@@ -165,6 +200,12 @@ pub async fn resume(
         net,
         fs,
         vsock,
+        last_active: Arc::new(AtomicU64::new(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )),
         port_forwards: Mutex::new(Vec::new()),
     })
 }

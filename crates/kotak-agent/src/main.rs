@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Result;
 use kotak_agent::{
     api::{AppState, router},
+    gc::start_gc,
     network::{IpamAllocator, PortManager},
     sandbox::SandboxConfig,
     snapshot::SnapshotStore,
@@ -24,6 +25,9 @@ async fn main() -> Result<()> {
         },
         base_rootfs: "/home/naufal/kotak/firecracker-local/rootfs.ext4".to_string(),
     });
+
+    // GC 10 minutes
+    start_gc(state.clone(), 10);
 
     let app = router(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;

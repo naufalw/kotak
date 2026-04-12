@@ -3,6 +3,7 @@ pub mod cmd;
 pub mod exec;
 pub mod filesystem;
 pub mod firecracker;
+pub mod gc;
 pub mod network;
 pub mod sandbox;
 pub mod snapshot;
