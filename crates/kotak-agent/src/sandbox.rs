@@ -49,6 +49,12 @@ impl Sandbox {
         };
 
         client.launch(&resolved).await?;
+        client
+            .exec(
+                &process.vsock_path,
+                "rm -f /etc/ssh/ssh_host_* && ssh-keygen -A && rc-service sshd restart",
+            )
+            .await?;
 
         Ok(Self {
             id: id.to_string(),
