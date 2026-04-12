@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Ok, Result, anyhow, bail};
 use tokio::sync::Mutex;
 
 use crate::cmd::run_cmd;
@@ -92,4 +92,122 @@ pub async fn teardown_tap(net: &TapNetwork) -> Result<()> {
     .await?;
     run_cmd(&["ip", "link", "del", &net.tap_name]).await?;
     Ok(())
+}
+
+pub struct PortForward {
+    pub host_port: u16,
+    pub guest_port: u16,
+}
+
+pub struct PortManager {
+    allocations: Mutex<HashMap<u16, String>>, // host_port -> sandbox_id
+}
+
+impl PortManager {
+    pub fn new() -> Self {
+        Self {
+            allocations: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn forward(&self, sandbox_id: &str, guest_ip: &str, guest_port: u16) -> Result<u16> {
+        let host_port = self.allocate_port().await?;
+
+        // from internet
+        run_cmd(&[
+            "iptables",
+            "-t",
+            "nat",
+            "-A",
+            "PREROUTING",
+            "-p",
+            "tcp",
+            "--dport",
+            &host_port.to_string(),
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &format!("{}:{}", guest_ip, guest_port),
+        ])
+        .await?;
+
+        // from host (cz host skips PREROUTING)
+        run_cmd(&[
+            "iptables",
+            "-t",
+            "nat",
+            "-A",
+            "OUTPUT",
+            "-p",
+            "tcp",
+            "--dport",
+            &host_port.to_string(),
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &format!("{}:{}", guest_ip, guest_port),
+        ])
+        .await?;
+
+        self.allocations
+            .lock()
+            .await
+            .insert(host_port, sandbox_id.to_string());
+        Ok(host_port)
+    }
+
+    pub async fn remove(&self, host_port: u16, guest_ip: &str, guest_port: u16) -> Result<()> {
+        run_cmd(&[
+            "iptables",
+            "-t",
+            "nat",
+            "-D",
+            "PREROUTING",
+            "-p",
+            "tcp",
+            "--dport",
+            &host_port.to_string(),
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &format!("{}:{}", guest_ip, guest_port),
+        ])
+        .await?;
+
+        run_cmd(&[
+            "iptables",
+            "-t",
+            "nat",
+            "-D",
+            "OUTPUT",
+            "-p",
+            "tcp",
+            "--dport",
+            &host_port.to_string(),
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &format!("{}:{}", guest_ip, guest_port),
+        ])
+        .await?;
+
+        self.allocations.lock().await.remove(&host_port);
+        Ok(())
+    }
+
+    async fn allocate_port(&self) -> Result<u16> {
+        let taken = self.allocations.lock().await;
+        for port in 30000u16..=40000 {
+            if !taken.contains_key(&port) {
+                return Ok(port);
+            }
+        }
+        bail!("no free ports")
+    }
+}
+
+impl Default for PortManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
