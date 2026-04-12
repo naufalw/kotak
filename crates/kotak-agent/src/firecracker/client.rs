@@ -121,7 +121,7 @@ impl FirecrackerClient {
 
     pub async fn exec(&self, vsock_path: &str, command: &str) -> Result<ExecResponse> {
         tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(300),
             self.exec_inner(vsock_path, command),
         )
         .await
