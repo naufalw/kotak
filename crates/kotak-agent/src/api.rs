@@ -1,6 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{Json, Router, extract::State, response::IntoResponse};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    response::IntoResponse,
+    routing::{delete, post},
+};
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -8,7 +13,7 @@ use tokio::sync::Mutex;
 use crate::{
     filesystem::FilesystemManager,
     network::IpamAllocator,
-    sandbox::{Sandbox, SandboxConfig},
+    sandbox::{self, Sandbox, SandboxConfig, resume},
     snapshot::SnapshotStore,
 };
 
@@ -21,7 +26,13 @@ pub struct AppState {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new().with_state(state)
+    Router::new()
+        .route("/sandboxes", post(create_sandbox))
+        .route("/sandboxes/:id", delete(delete_sandbox))
+        .route("/sandboxes/:id/exec", post(exec_sandbox))
+        .route("/sandboxes/:id/hibernate", post(hibernate_sandbox))
+        .route("/sandboxes/:id/resume", post(resume_sandbox))
+        .with_state(state)
 }
 
 // Packet Structure
@@ -64,3 +75,68 @@ async fn create_sandbox(State(state): State<Arc<AppState>>) -> impl IntoResponse
     }
 }
 
+async fn delete_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let sandbox = state.sandboxes.lock().await.remove(&id);
+    match sandbox {
+        Some(s) => match s.destroy(&state.ipam).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn exec_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<ExecRequest>,
+) -> impl IntoResponse {
+    let sandboxes = state.sandboxes.lock().await;
+    match sandboxes.get(&id) {
+        Some(sbx) => match sbx.exec(&body.command).await {
+            Ok(r) => Json(ExecResponse {
+                stdout: r.stdout,
+                stderr: r.stderr,
+                exit_code: r.exit_code,
+            })
+            .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn hibernate_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut sandboxes = state.sandboxes.lock().await;
+    match sandboxes.get(&id) {
+        Some(sandbox) => match sandbox.hibernate(&state.store).await {
+            Ok(_) => {
+                sandboxes.remove(&id);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn resume_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let fs = FilesystemManager::new(&state.base_rootfs);
+    match resume(&id, &state.ipam, fs, &state.store, &state.config).await {
+        Ok(sbx) => {
+            let guest_ip = sbx.net.guest_ip.clone();
+            state.sandboxes.lock().await.insert(id.clone(), sbx);
+            Json(SandboxResponse { id, guest_ip }).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
