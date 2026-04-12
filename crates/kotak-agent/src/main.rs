@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Result;
 use kotak_agent::{
     api::{AppState, router},
-    network::IpamAllocator,
+    network::{IpamAllocator, PortManager},
     sandbox::SandboxConfig,
     snapshot::SnapshotStore,
 };
@@ -17,6 +17,7 @@ async fn main() -> Result<()> {
         sandboxes: Mutex::new(HashMap::new()),
         ipam: IpamAllocator::new(),
         store: SnapshotStore::new(),
+        port_manager: PortManager::new(),
         config: SandboxConfig {
             kernel_path: "/home/naufal/kotak/firecracker-local/vmlinux-6.1.155.bin".to_string(),
             guest_cid: 3,

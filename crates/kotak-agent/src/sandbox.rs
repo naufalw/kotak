@@ -4,10 +4,11 @@ use crate::{
         client::{ExecResponse, FirecrackerClient, ResolvedConfig},
         process::FirecrackerProcess,
     },
-    network::{IpamAllocator, TapNetwork, setup_tap, teardown_tap},
+    network::{IpamAllocator, PortForward, PortManager, TapNetwork, setup_tap, teardown_tap},
     snapshot::SnapshotStore,
 };
 use anyhow::Result;
+use tokio::sync::Mutex;
 
 pub struct SandboxConfig {
     pub kernel_path: String,
@@ -17,6 +18,7 @@ pub struct SandboxConfig {
 pub struct Sandbox {
     pub id: String,
     pub net: TapNetwork,
+    pub port_forwards: Mutex<Vec<PortForward>>,
     process: FirecrackerProcess,
     client: FirecrackerClient,
     fs: FilesystemManager,
@@ -62,6 +64,7 @@ impl Sandbox {
             client,
             net,
             fs,
+            port_forwards: Mutex::new(Vec::new()),
         })
     }
 
@@ -78,7 +81,35 @@ impl Sandbox {
         Ok(())
     }
 
-    pub async fn destroy(self, ipam: &IpamAllocator) -> Result<()> {
+    pub async fn forward_port(&self, port_manager: &PortManager, guest_port: u16) -> Result<u16> {
+        let host_port = port_manager
+            .forward(&self.id, &self.net.guest_ip, guest_port)
+            .await?;
+        self.port_forwards.lock().await.push(PortForward {
+            host_port,
+            guest_port,
+        });
+
+        Ok(host_port)
+    }
+
+    pub async fn remove_port(&self, port_manager: &PortManager, guest_port: u16) -> Result<()> {
+        let mut forwards = self.port_forwards.lock().await;
+        if let Some(pos) = forwards.iter().position(|f| f.guest_port == guest_port) {
+            let fwd = forwards.remove(pos);
+            port_manager
+                .remove(fwd.host_port, &self.net.guest_ip, guest_port)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn destroy(self, ipam: &IpamAllocator, port_manager: &PortManager) -> Result<()> {
+        for fwd in self.port_forwards.lock().await.iter() {
+            let _ = port_manager
+                .remove(fwd.host_port, &self.net.guest_ip, fwd.guest_port)
+                .await;
+        }
         teardown_tap(&self.net).await?;
         ipam.release(self.net.slot).await;
         self.fs.teardown(&self.id).await?;
@@ -123,5 +154,6 @@ pub async fn resume(
         client,
         net,
         fs,
+        port_forwards: Mutex::new(Vec::new()),
     })
 }

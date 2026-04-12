@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     filesystem::FilesystemManager,
-    network::IpamAllocator,
+    network::{IpamAllocator, PortManager},
     sandbox::{Sandbox, SandboxConfig, resume},
     snapshot::SnapshotStore,
 };
@@ -20,6 +20,7 @@ use crate::{
 pub struct AppState {
     pub sandboxes: Mutex<HashMap<String, Sandbox>>,
     pub ipam: IpamAllocator,
+    pub port_manager: PortManager,
     pub store: SnapshotStore,
     pub config: SandboxConfig,
     pub base_rootfs: String,
@@ -32,6 +33,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sandboxes/{id}", delete(delete_sandbox))
         .route("/sandboxes/{id}/exec", post(exec_sandbox))
         .route("/sandboxes/{id}/hibernate", post(hibernate_sandbox))
+        .route("/sandboxes/{id}/ports/{port}", post(forward_port))
+        .route("/sandboxes/{id}/ports/{port}", delete(remove_port))
         .route("/sandboxes/{id}/resume", post(resume_sandbox))
         .with_state(state)
 }
@@ -54,6 +57,12 @@ struct ExecResponse {
     stdout: String,
     stderr: String,
     exit_code: i32,
+}
+
+#[derive(Serialize)]
+struct PortForwardResponse {
+    guest_port: u16,
+    host_port: u16,
 }
 
 // handlers
@@ -93,7 +102,7 @@ async fn delete_sandbox(
 ) -> impl IntoResponse {
     let sandbox = state.sandboxes.lock().await.remove(&id);
     match sandbox {
-        Some(s) => match s.destroy(&state.ipam).await {
+        Some(s) => match s.destroy(&state.ipam, &state.port_manager).await {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
@@ -154,5 +163,37 @@ async fn resume_sandbox(
             Json(SandboxResponse { id, guest_ip }).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn forward_port(
+    State(state): State<Arc<AppState>>,
+    Path((id, guest_port)): Path<(String, u16)>,
+) -> impl IntoResponse {
+    let sandboxes = state.sandboxes.lock().await;
+    match sandboxes.get(&id) {
+        Some(sandbox) => match sandbox.forward_port(&state.port_manager, guest_port).await {
+            Ok(host_port) => Json(PortForwardResponse {
+                guest_port,
+                host_port,
+            })
+            .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn remove_port(
+    State(state): State<Arc<AppState>>,
+    Path((id, guest_port)): Path<(String, u16)>,
+) -> impl IntoResponse {
+    let sandboxes = state.sandboxes.lock().await;
+    match sandboxes.get(&id) {
+        Some(sandbox) => match sandbox.remove_port(&state.port_manager, guest_port).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
