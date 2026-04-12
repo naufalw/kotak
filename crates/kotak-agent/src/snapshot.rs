@@ -107,6 +107,7 @@ impl SnapshotStore {
             "zstd",
             "-d",
             "-q",
+            "-f",
             archive_path.to_str().unwrap(),
             "-o",
             dest_rootfs.to_str().unwrap(),
