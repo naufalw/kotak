@@ -7,11 +7,11 @@ pub async fn run_cmd(args: &[&str]) -> Result<()> {
         .await?;
 
     if !status.success() {
-        return Err(anyhow::anyhow!(
+        anyhow::bail!(
             "command failed: `{}` exit code {:?}",
             args.join(" "),
             status.code()
-        ));
+        );
     }
 
     Ok(())
