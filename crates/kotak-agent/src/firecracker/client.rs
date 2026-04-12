@@ -11,15 +11,15 @@ use tokio::{
     time::sleep,
 };
 
-pub struct SandboxConfig {
-    pub kernel_path: String,
-    pub rootfs_path: String,
-    pub tap_name: String,
-    pub mac: String,
-    pub guest_ip: String,
-    pub gateway_ip: String,
-    pub guest_cid: u32,
-    pub vsock_path: String, // UDS on host machine
+pub(crate) struct ResolvedConfig<'a> {
+    pub(crate) kernel_path: &'a str,
+    pub(crate) rootfs_path: &'a str,
+    pub(crate) mac: &'a str,
+    pub(crate) guest_cid: u32,
+    pub(crate) tap_name: &'a str,
+    pub(crate) guest_ip: &'a str,
+    pub(crate) gateway_ip: &'a str,
+    pub(crate) vsock_path: &'a str,
 }
 
 pub struct FirecrackerClient {
@@ -27,21 +27,18 @@ pub struct FirecrackerClient {
 }
 
 impl FirecrackerClient {
-    pub async fn launch(&self, config: &SandboxConfig) -> Result<()> {
+    pub(crate) async fn launch(&self, config: &ResolvedConfig<'_>) -> Result<()> {
         let boot_args = format!(
             "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init random.trust_cpu=on ip={}::{}:255.255.255.0::eth0:off",
             config.guest_ip, config.gateway_ip
         );
-
-        self.configure_boot(&config.kernel_path, &boot_args).await?;
-        self.configure_drive(&config.rootfs_path).await?;
-        self.configure_network(&config.tap_name, &config.mac)
-            .await?;
-        self.configure_vsock(config.guest_cid, &config.vsock_path)
+        self.configure_boot(config.kernel_path, &boot_args).await?;
+        self.configure_drive(config.rootfs_path).await?;
+        self.configure_network(config.tap_name, config.mac).await?;
+        self.configure_vsock(config.guest_cid, config.vsock_path)
             .await?;
         self.start().await?;
-        self.wait_for_ssh(&config.guest_ip).await?;
-
+        self.wait_for_ssh(config.guest_ip).await?;
         Ok(())
     }
 
@@ -184,6 +181,16 @@ impl FirecrackerClient {
             }
         }
         Ok(())
+    }
+
+    pub async fn stop(&self) -> Result<()> {
+        self.put(
+            "/actions",
+            json!({
+                "action_type": "SendCtrlAltDel"
+            }),
+        )
+        .await
     }
 }
 

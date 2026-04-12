@@ -1,10 +1,9 @@
 use anyhow::Result;
 use kotak_agent::{
-    firecracker::{
-        client::{FirecrackerClient, SandboxConfig},
-        process::FirecrackerProcess,
-    },
-    network::{IpamAllocator, setup_tap},
+    filesystem::FilesystemManager,
+    network::IpamAllocator,
+    sandbox::{Sandbox, SandboxConfig},
+    snapshot::SnapshotStore,
 };
 
 #[tokio::main]
@@ -13,31 +12,22 @@ async fn main() -> Result<()> {
 
     let id = "sandbox-001";
     let ipam = IpamAllocator::new();
-    let net = ipam.allocate(id).await?;
-    setup_tap(&net).await?;
-
-    let fc_process = FirecrackerProcess::spawn(id).await?;
+    let store = SnapshotStore::new();
+    let fs = FilesystemManager::new("/home/naufal/kotak/firecracker-local/rootfs.ext4");
 
     let config = SandboxConfig {
         kernel_path: "/home/naufal/kotak/firecracker-local/vmlinux-6.1.155.bin".to_string(),
-        rootfs_path: "/home/naufal/kotak/firecracker-local/rootfs.ext4".to_string(),
-        tap_name: net.tap_name.clone(),
         mac: "AA:FC:00:00:00:01".to_string(),
-        guest_ip: net.guest_ip.clone(),
-        gateway_ip: net.host_ip.clone(),
         guest_cid: 3,
-        vsock_path: fc_process.vsock_path.clone(),
     };
 
-    let fc = FirecrackerClient::new(&fc_process.socket_path);
-    fc.launch(&config).await?;
+    let sandbox = Sandbox::create(id, &ipam, fs, config).await?;
 
-    let response = fc.exec(&config.vsock_path, "uname -a").await?;
+    let response = sandbox.exec("uname -a").await?;
     tracing::info!("stdout: {}", response.stdout);
-    tracing::info!("stderr: {}", response.stderr);
-    tracing::info!("exit_code: {}", response.exit_code);
 
-    std::future::pending::<()>().await;
+    sandbox.hibernate(&store).await?;
+    sandbox.destroy(&ipam).await?;
 
     Ok(())
 }

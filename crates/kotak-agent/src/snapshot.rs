@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client, primitives::ByteStream};
+
+use crate::cmd::run_cmd;
 
 const BUCKET: &str = "kotaksnapshot";
 
@@ -74,6 +76,44 @@ impl SnapshotStore {
         tokio::fs::write(dest, bytes).await?;
 
         tracing::info!("downloaded s3://{}/{} to {}", BUCKET, key, dest.display());
+        Ok(())
+    }
+
+    pub async fn snapshot_filesystem(&self, sandbox_id: &str, rootfs_path: &Path) -> Result<()> {
+        let archive_path = PathBuf::from(format!("/tmp/{}-rootfs.ext4.zst", sandbox_id));
+
+        run_cmd(&[
+            "zstd",
+            "-q",
+            "-T0",
+            rootfs_path.to_str().unwrap(),
+            "-o",
+            archive_path.to_str().unwrap(),
+        ])
+        .await?;
+
+        self.upload(sandbox_id, &archive_path, "rootfs.ext4.zst")
+            .await?;
+        tokio::fs::remove_file(&archive_path).await?;
+        Ok(())
+    }
+
+    pub async fn restore_filesystem(&self, sandbox_id: &str, dest_rootfs: &Path) -> Result<()> {
+        let archive_path = PathBuf::from(format!("/tmp/{}-rootfs.ext4.zst", sandbox_id));
+        self.download(sandbox_id, "rootfs.ext4.zst", &archive_path)
+            .await?;
+
+        run_cmd(&[
+            "zstd",
+            "-d",
+            "-q",
+            archive_path.to_str().unwrap(),
+            "-o",
+            dest_rootfs.to_str().unwrap(),
+        ])
+        .await?;
+
+        tokio::fs::remove_file(&archive_path).await?;
         Ok(())
     }
 }
