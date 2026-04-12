@@ -34,6 +34,12 @@ impl FilesystemManager {
         Ok(dest)
     }
 
+    pub async fn prepare_empty(&self, id: &str) -> Result<PathBuf> {
+        let sandbox_dir = self.sandboxes_dir.join(id);
+        tokio::fs::create_dir_all(&sandbox_dir).await?;
+        Ok(sandbox_dir.join("rootfs.ext4"))
+    }
+
     pub async fn teardown(&self, id: &str) -> Result<()> {
         let sandbox_dir = self.sandboxes_dir.join(id);
         tokio::fs::remove_dir_all(&sandbox_dir).await?;
