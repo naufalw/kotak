@@ -11,7 +11,6 @@ use anyhow::Result;
 
 pub struct SandboxConfig {
     pub kernel_path: String,
-    pub mac: String,
     pub guest_cid: u32,
 }
 
@@ -32,6 +31,7 @@ impl Sandbox {
     ) -> Result<Self> {
         let rootfs_path = fs.prepare(id).await?;
         let net = ipam.allocate(id).await?;
+        let mac = format!("AA:FC:00:00:{:02X}:{:02X}", net.slot >> 8, net.slot & 0xff);
         setup_tap(&net).await?;
 
         let process = FirecrackerProcess::spawn(id).await?;
@@ -40,7 +40,7 @@ impl Sandbox {
         let resolved = ResolvedConfig {
             kernel_path: &config.kernel_path,
             rootfs_path: rootfs_path.to_str().unwrap(),
-            mac: &config.mac,
+            mac: &mac,
             guest_cid: config.guest_cid,
             tap_name: &net.tap_name,
             guest_ip: &net.guest_ip,
@@ -92,6 +92,7 @@ pub async fn resume(
     store.restore_filesystem(id, &rootfs_path).await?;
 
     let net = ipam.allocate(id).await?;
+    let mac = format!("AA:FC:00:00:{:02X}:{:02X}", net.slot >> 8, net.slot & 0xff);
     setup_tap(&net).await?;
 
     let process = FirecrackerProcess::spawn(id).await?;
@@ -100,7 +101,7 @@ pub async fn resume(
     let resolved = ResolvedConfig {
         kernel_path: &config.kernel_path,
         rootfs_path: rootfs_path.to_str().unwrap(),
-        mac: &config.mac,
+        mac: &mac,
         guest_cid: config.guest_cid,
         tap_name: &net.tap_name,
         guest_ip: &net.guest_ip,
