@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use crate::{
     filesystem::FilesystemManager,
     network::IpamAllocator,
-    sandbox::{self, Sandbox, SandboxConfig, resume},
+    sandbox::{Sandbox, SandboxConfig, resume},
     snapshot::SnapshotStore,
 };
 
@@ -28,10 +28,10 @@ pub struct AppState {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/sandboxes", post(create_sandbox))
-        .route("/sandboxes/:id", delete(delete_sandbox))
-        .route("/sandboxes/:id/exec", post(exec_sandbox))
-        .route("/sandboxes/:id/hibernate", post(hibernate_sandbox))
-        .route("/sandboxes/:id/resume", post(resume_sandbox))
+        .route("/sandboxes/{id}", delete(delete_sandbox))
+        .route("/sandboxes/{id}/exec", post(exec_sandbox))
+        .route("/sandboxes/{id}/hibernate", post(hibernate_sandbox))
+        .route("/sandboxes/{id}/resume", post(resume_sandbox))
         .with_state(state)
 }
 
