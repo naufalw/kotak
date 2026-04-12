@@ -2,7 +2,7 @@ use anyhow::Result;
 use kotak_agent::{
     filesystem::FilesystemManager,
     network::IpamAllocator,
-    sandbox::{Sandbox, SandboxConfig},
+    sandbox::{Sandbox, SandboxConfig, resume},
     snapshot::SnapshotStore,
 };
 
@@ -21,12 +21,27 @@ async fn main() -> Result<()> {
         guest_cid: 3,
     };
 
-    let sandbox = Sandbox::create(id, &ipam, fs, config).await?;
-
+    let sandbox = Sandbox::create(id, &ipam, fs, &config).await?;
     let response = sandbox.exec("uname -a").await?;
     tracing::info!("stdout: {}", response.stdout);
 
+    let response = sandbox
+        .exec("echo 'kotak works' > /root/testfile.txt && cat /root/testfile.txt")
+        .await?;
+    tracing::info!("created: {}", response.stdout.trim());
+
     sandbox.hibernate(&store).await?;
+    sandbox.destroy(&ipam).await?;
+
+    tracing::info!("here");
+    let fs = FilesystemManager::new("/home/naufal/kotak/firecracker-local/rootfs.ext4");
+    let sandbox = resume(id, &ipam, fs, &store, &config).await?;
+    let response = sandbox.exec("uname -a").await?;
+    tracing::info!("STDOUTT HERE: {}", response.stdout);
+
+    let response = sandbox.exec("cat /root/testfile.txt").await?;
+    tracing::info!("HEREEEEEE: {}", response.stdout.trim());
+
     sandbox.destroy(&ipam).await?;
 
     Ok(())
