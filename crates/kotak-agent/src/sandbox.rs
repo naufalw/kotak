@@ -17,9 +17,9 @@ pub struct SandboxConfig {
 
 pub struct Sandbox {
     pub id: String,
+    pub net: TapNetwork,
     process: FirecrackerProcess,
     client: FirecrackerClient,
-    net: TapNetwork,
     fs: FilesystemManager,
 }
 

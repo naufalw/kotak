@@ -1,3 +1,4 @@
+pub mod api;
 pub mod cmd;
 pub mod filesystem;
 pub mod firecracker;
