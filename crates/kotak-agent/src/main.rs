@@ -7,14 +7,14 @@ use kotak_agent::{
     sandbox::SandboxConfig,
     snapshot::SnapshotStore,
 };
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let state = Arc::new(AppState {
-        sandboxes: Mutex::new(HashMap::new()),
+        sandboxes: RwLock::new(HashMap::new()),
         ipam: IpamAllocator::new(),
         store: SnapshotStore::new(),
         port_manager: PortManager::new(),

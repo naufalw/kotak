@@ -8,7 +8,7 @@ use axum::{
 };
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::{
     filesystem::FilesystemManager,
@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub struct AppState {
-    pub sandboxes: Mutex<HashMap<String, Sandbox>>,
+    pub sandboxes: RwLock<HashMap<String, Sandbox>>,
     pub ipam: IpamAllocator,
     pub port_manager: PortManager,
     pub store: SnapshotStore,
@@ -68,7 +68,7 @@ struct PortForwardResponse {
 // handlers
 //
 async fn list_sandboxes(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let sandboxes = state.sandboxes.lock().await;
+    let sandboxes = state.sandboxes.read().await;
     let list: Vec<SandboxResponse> = sandboxes
         .values()
         .map(|s| SandboxResponse {
@@ -86,7 +86,7 @@ async fn create_sandbox(State(state): State<Arc<AppState>>) -> impl IntoResponse
     match Sandbox::create(&id, &state.ipam, fs, &state.config).await {
         Ok(sbx) => {
             let guest_ip = sbx.net.guest_ip.clone();
-            state.sandboxes.lock().await.insert(id.clone(), sbx);
+            state.sandboxes.write().await.insert(id.clone(), sbx);
             (StatusCode::CREATED, Json(SandboxResponse { id, guest_ip })).into_response()
         }
         Err(e) => {
@@ -100,7 +100,7 @@ async fn delete_sandbox(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let sandbox = state.sandboxes.lock().await.remove(&id);
+    let sandbox = state.sandboxes.write().await.remove(&id);
     match sandbox {
         Some(s) => match s.destroy(&state.ipam, &state.port_manager).await {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -115,7 +115,7 @@ async fn exec_sandbox(
     Path(id): Path<String>,
     Json(body): Json<ExecRequest>,
 ) -> impl IntoResponse {
-    let sandboxes = state.sandboxes.lock().await;
+    let sandboxes = state.sandboxes.read().await;
     match sandboxes.get(&id) {
         Some(sbx) => match sbx.exec(&body.command).await {
             Ok(r) => Json(ExecResponse {
@@ -134,13 +134,11 @@ async fn hibernate_sandbox(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let mut sandboxes = state.sandboxes.lock().await;
-    match sandboxes.get(&id) {
-        Some(sandbox) => match sandbox.hibernate(&state.store).await {
-            Ok(_) => {
-                sandboxes.remove(&id);
-                StatusCode::NO_CONTENT.into_response()
-            }
+    let sandbox = state.sandboxes.write().await.remove(&id);
+
+    match sandbox {
+        Some(s) => match s.hibernate(&state.store).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
         None => StatusCode::NOT_FOUND.into_response(),
@@ -151,7 +149,7 @@ async fn resume_sandbox(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.sandboxes.lock().await.contains_key(&id) {
+    if state.sandboxes.read().await.contains_key(&id) {
         return (StatusCode::CONFLICT, "sandbox already running").into_response();
     }
 
@@ -159,7 +157,7 @@ async fn resume_sandbox(
     match resume(&id, &state.ipam, fs, &state.store, &state.config).await {
         Ok(sbx) => {
             let guest_ip = sbx.net.guest_ip.clone();
-            state.sandboxes.lock().await.insert(id.clone(), sbx);
+            state.sandboxes.write().await.insert(id.clone(), sbx);
             Json(SandboxResponse { id, guest_ip }).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -170,8 +168,7 @@ async fn forward_port(
     State(state): State<Arc<AppState>>,
     Path((id, guest_port)): Path<(String, u16)>,
 ) -> impl IntoResponse {
-    let sandboxes = state.sandboxes.lock().await;
-    match sandboxes.get(&id) {
+    match state.sandboxes.read().await.get(&id) {
         Some(sandbox) => match sandbox.forward_port(&state.port_manager, guest_port).await {
             Ok(host_port) => Json(PortForwardResponse {
                 guest_port,
@@ -188,9 +185,8 @@ async fn remove_port(
     State(state): State<Arc<AppState>>,
     Path((id, guest_port)): Path<(String, u16)>,
 ) -> impl IntoResponse {
-    let sandboxes = state.sandboxes.lock().await;
-    match sandboxes.get(&id) {
-        Some(sandbox) => match sandbox.remove_port(&state.port_manager, guest_port).await {
+    match state.sandboxes.read().await.get(&id) {
+        Some(sbx) => match sbx.remove_port(&state.port_manager, guest_port).await {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
