@@ -8,7 +8,6 @@ use crate::{
     snapshot::SnapshotStore,
 };
 use anyhow::Result;
-use std::path::PathBuf;
 
 pub struct SandboxConfig {
     pub kernel_path: String,
@@ -29,7 +28,7 @@ impl Sandbox {
         id: &str,
         ipam: &IpamAllocator,
         fs: FilesystemManager,
-        config: SandboxConfig,
+        config: &SandboxConfig,
     ) -> Result<Self> {
         let rootfs_path = fs.prepare(id).await?;
         let net = ipam.allocate(id).await?;
@@ -73,49 +72,49 @@ impl Sandbox {
         Ok(())
     }
 
-    pub async fn resume(
-        id: &str,
-        ipam: &IpamAllocator,
-        fs: FilesystemManager,
-        store: &SnapshotStore,
-        config: &SandboxConfig,
-    ) -> Result<Sandbox> {
-        let rootfs_path = fs.prepare_empty(id).await?;
-
-        store.restore_filesystem(id, &rootfs_path).await?;
-
-        let net = ipam.allocate(id).await?;
-        setup_tap(&net).await?;
-
-        let process = FirecrackerProcess::spawn(id).await?;
-        let client = FirecrackerClient::new(&process.socket_path);
-
-        let resolved = ResolvedConfig {
-            kernel_path: &config.kernel_path,
-            rootfs_path: rootfs_path.to_str().unwrap(),
-            mac: &config.mac,
-            guest_cid: config.guest_cid,
-            tap_name: &net.tap_name,
-            guest_ip: &net.guest_ip,
-            gateway_ip: &net.host_ip,
-            vsock_path: &process.vsock_path,
-        };
-
-        client.launch(&resolved).await?;
-
-        Ok(Sandbox {
-            id: id.to_string(),
-            process,
-            client,
-            net,
-            fs,
-        })
-    }
-
     pub async fn destroy(self, ipam: &IpamAllocator) -> Result<()> {
         teardown_tap(&self.net).await?;
         ipam.release(self.net.slot).await;
         self.fs.teardown(&self.id).await?;
         Ok(())
     }
+}
+
+pub async fn resume(
+    id: &str,
+    ipam: &IpamAllocator,
+    fs: FilesystemManager,
+    store: &SnapshotStore,
+    config: &SandboxConfig,
+) -> Result<Sandbox> {
+    let rootfs_path = fs.prepare_empty(id).await?;
+
+    store.restore_filesystem(id, &rootfs_path).await?;
+
+    let net = ipam.allocate(id).await?;
+    setup_tap(&net).await?;
+
+    let process = FirecrackerProcess::spawn(id).await?;
+    let client = FirecrackerClient::new(&process.socket_path);
+
+    let resolved = ResolvedConfig {
+        kernel_path: &config.kernel_path,
+        rootfs_path: rootfs_path.to_str().unwrap(),
+        mac: &config.mac,
+        guest_cid: config.guest_cid,
+        tap_name: &net.tap_name,
+        guest_ip: &net.guest_ip,
+        gateway_ip: &net.host_ip,
+        vsock_path: &process.vsock_path,
+    };
+
+    client.launch(&resolved).await?;
+
+    Ok(Sandbox {
+        id: id.to_string(),
+        process,
+        client,
+        net,
+        fs,
+    })
 }
