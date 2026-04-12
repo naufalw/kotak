@@ -60,7 +60,7 @@ pub struct TapNetwork {
 
 pub async fn setup_tap(net: &TapNetwork) -> Result<()> {
     // Cleanup old tap with this tap id
-    run_cmd(&["ip", "link", "del", &net.tap_name]).await?;
+    let _ = run_cmd(&["ip", "link", "del", &net.tap_name]).await;
 
     // Create TAP
     run_cmd(&["ip", "tuntap", "add", &net.tap_name, "mode", "tap"]).await?;
