@@ -15,7 +15,7 @@ sudo mount $ROOTFS $MOUNT
 
 echo "==> populating rootfs"
 docker run --rm -v $MOUNT:/my-rootfs alpine sh -c '
-    apk add openrc util-linux openssh bash
+    apk add openrc util-linux openssh bash curl unzip python3 nodejs npm
 
     # Serial Console
     ln -s agetty /etc/init.d/agetty.ttyS0
@@ -37,6 +37,12 @@ docker run --rm -v $MOUNT:/my-rootfs alpine sh -c '
     # DNS
     echo "nameserver 8.8.8.8" > /etc/resolv.conf
     echo "hosts: files dns" > /etc/nsswitch.conf
+
+    # Install devtool
+    curl -fsSL https://bun.sh/install | bash
+    mkdir -p /usr/local/bin
+    cp /root/.bun/bin/bun /usr/local/bin/bun
+    chmod +x /usr/local/bin/bun
 
     # Filesystem copy
     for d in bin etc lib root sbin usr; do tar c "/$d" | tar x -C /my-rootfs; done
