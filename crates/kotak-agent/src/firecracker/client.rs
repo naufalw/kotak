@@ -120,6 +120,15 @@ impl FirecrackerClient {
     }
 
     pub async fn exec(&self, vsock_path: &str, command: &str) -> Result<ExecResponse> {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            self.exec_inner(vsock_path, command),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("exec timed out"))?
+    }
+
+    async fn exec_inner(&self, vsock_path: &str, command: &str) -> Result<ExecResponse> {
         use tokio::io::BufReader;
         let stream = UnixStream::connect(vsock_path).await?;
         let mut stream = BufReader::new(stream);
