@@ -26,8 +26,11 @@ impl FilesystemManager {
         run_cmd(&[
             "cp",
             "--sparse=always",
-            self.base_rootfs.to_str().unwrap(),
-            dest.to_str().unwrap(),
+            self.base_rootfs
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 base rootfs path"))?,
+            dest.to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 sandbox rootfs path"))?,
         ])
         .await?;
 

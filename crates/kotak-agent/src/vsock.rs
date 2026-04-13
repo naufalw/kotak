@@ -89,7 +89,9 @@ impl VsockClient {
                 match serde_json::from_slice::<ExecChunk>(&buf) {
                     Ok(chunk) => {
                         let is_exit = matches!(chunk, ExecChunk::Exit { .. });
-                        let _ = tx.send(chunk).await;
+                        if tx.send(chunk).await.is_err() {
+                            break; // receiver dropped
+                        }
                         if is_exit {
                             break;
                         }

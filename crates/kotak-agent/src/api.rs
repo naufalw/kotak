@@ -19,7 +19,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     filesystem::FilesystemManager,
     network::{IpamAllocator, PortManager},
-    sandbox::{Sandbox, SandboxConfig, resume},
+    sandbox::{Sandbox, SandboxConfig},
     snapshot::SnapshotStore,
     vsock::ExecChunk,
 };
@@ -195,7 +195,7 @@ async fn resume_sandbox(
     }
 
     let fs = FilesystemManager::new(&state.base_rootfs);
-    match resume(&id, &state.ipam, fs, &state.store, &state.config).await {
+    match Sandbox::resume(&id, &state.ipam, fs, &state.store, &state.config).await {
         Ok(sbx) => {
             let guest_ip = sbx.net.guest_ip.clone();
             state.sandboxes.write().await.insert(id.clone(), sbx);

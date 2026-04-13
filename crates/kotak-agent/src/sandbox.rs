@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -35,6 +36,44 @@ pub struct Sandbox {
     fs: FilesystemManager,
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// vm boot : TAP, firecracker, configure, start
+async fn boot_vm(
+    id: &str,
+    rootfs_path: &Path,
+    net: &TapNetwork,
+    config: &SandboxConfig,
+) -> Result<(FirecrackerProcess, FirecrackerClient, VsockClient)> {
+    let mac = format!("AA:FC:00:00:{:02X}:{:02X}", net.slot >> 8, net.slot & 0xff);
+    setup_tap(net).await?;
+
+    let process = FirecrackerProcess::spawn(id).await?;
+    let client = FirecrackerClient::new(&process.socket_path);
+    let vsock = VsockClient::new(&process.vsock_path);
+
+    let resolved = ResolvedConfig {
+        kernel_path: &config.kernel_path,
+        rootfs_path: rootfs_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 rootfs path"))?,
+        mac: &mac,
+        guest_cid: config.guest_cid,
+        tap_name: &net.tap_name,
+        guest_ip: &net.guest_ip,
+        gateway_ip: &net.host_ip,
+        vsock_path: &process.vsock_path,
+    };
+
+    client.launch(&resolved).await?;
+    Ok((process, client, vsock))
+}
+
 impl Sandbox {
     pub async fn create(
         id: &str,
@@ -44,25 +83,8 @@ impl Sandbox {
     ) -> Result<Self> {
         let rootfs_path = fs.prepare(id).await?;
         let net = ipam.allocate(id).await?;
-        let mac = format!("AA:FC:00:00:{:02X}:{:02X}", net.slot >> 8, net.slot & 0xff);
-        setup_tap(&net).await?;
+        let (process, client, vsock) = boot_vm(id, &rootfs_path, &net, config).await?;
 
-        let process = FirecrackerProcess::spawn(id).await?;
-        let client = FirecrackerClient::new(&process.socket_path);
-        let vsock = VsockClient::new(&process.vsock_path);
-
-        let resolved = ResolvedConfig {
-            kernel_path: &config.kernel_path,
-            rootfs_path: rootfs_path.to_str().unwrap(),
-            mac: &mac,
-            guest_cid: config.guest_cid,
-            tap_name: &net.tap_name,
-            guest_ip: &net.guest_ip,
-            gateway_ip: &net.host_ip,
-            vsock_path: &process.vsock_path,
-        };
-
-        client.launch(&resolved).await?;
         vsock
             .exec("rm -f /etc/ssh/ssh_host_* && ssh-keygen -A && rc-service sshd restart")
             .await?;
@@ -74,12 +96,32 @@ impl Sandbox {
             net,
             fs,
             vsock,
-            last_active: Arc::new(AtomicU64::new(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            )),
+            last_active: Arc::new(AtomicU64::new(now_secs())),
+            port_forwards: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub async fn resume(
+        id: &str,
+        ipam: &IpamAllocator,
+        fs: FilesystemManager,
+        store: &SnapshotStore,
+        config: &SandboxConfig,
+    ) -> Result<Self> {
+        let rootfs_path = fs.prepare_empty(id).await?;
+        store.restore_filesystem(id, &rootfs_path).await?;
+
+        let net = ipam.allocate(id).await?;
+        let (process, client, vsock) = boot_vm(id, &rootfs_path, &net, config).await?;
+
+        Ok(Self {
+            id: id.to_string(),
+            process,
+            client,
+            net,
+            fs,
+            vsock,
+            last_active: Arc::new(AtomicU64::new(now_secs())),
             port_forwards: Mutex::new(Vec::new()),
         })
     }
@@ -136,76 +178,24 @@ impl Sandbox {
     }
 
     pub fn touch(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        self.last_active.store(now, Ordering::Relaxed);
+        self.last_active.store(now_secs(), Ordering::Relaxed);
     }
 
     pub async fn destroy(self, ipam: &IpamAllocator, port_manager: &PortManager) -> Result<()> {
-        let _ = self.client.stop().await;
+        if let Err(e) = self.client.stop().await {
+            tracing::warn!("sandbox {}: stop failed: {}", self.id, e);
+        }
         for fwd in self.port_forwards.lock().await.iter() {
-            let _ = port_manager
+            if let Err(e) = port_manager
                 .remove(fwd.host_port, &self.net.guest_ip, fwd.guest_port)
-                .await;
+                .await
+            {
+                tracing::warn!("sandbox {}: port remove failed: {}", self.id, e);
+            }
         }
         teardown_tap(&self.net).await?;
         ipam.release(self.net.slot).await;
         self.fs.teardown(&self.id).await?;
         Ok(())
     }
-
-    pub fn vsock_path(&self) -> &str {
-        &self.process.vsock_path
-    }
-}
-
-pub async fn resume(
-    id: &str,
-    ipam: &IpamAllocator,
-    fs: FilesystemManager,
-    store: &SnapshotStore,
-    config: &SandboxConfig,
-) -> Result<Sandbox> {
-    let rootfs_path = fs.prepare_empty(id).await?;
-
-    store.restore_filesystem(id, &rootfs_path).await?;
-
-    let net = ipam.allocate(id).await?;
-    let mac = format!("AA:FC:00:00:{:02X}:{:02X}", net.slot >> 8, net.slot & 0xff);
-    setup_tap(&net).await?;
-
-    let process = FirecrackerProcess::spawn(id).await?;
-    let client = FirecrackerClient::new(&process.socket_path);
-    let vsock = VsockClient::new(&process.vsock_path);
-
-    let resolved = ResolvedConfig {
-        kernel_path: &config.kernel_path,
-        rootfs_path: rootfs_path.to_str().unwrap(),
-        mac: &mac,
-        guest_cid: config.guest_cid,
-        tap_name: &net.tap_name,
-        guest_ip: &net.guest_ip,
-        gateway_ip: &net.host_ip,
-        vsock_path: &process.vsock_path,
-    };
-
-    client.launch(&resolved).await?;
-
-    Ok(Sandbox {
-        id: id.to_string(),
-        process,
-        client,
-        net,
-        fs,
-        vsock,
-        last_active: Arc::new(AtomicU64::new(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )),
-        port_forwards: Mutex::new(Vec::new()),
-    })
 }

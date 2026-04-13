@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     });
 
     // GC 10 minutes
-    start_gc(state.clone(), 10);
+    start_gc(state.clone(), 600);
 
     let app = router(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;

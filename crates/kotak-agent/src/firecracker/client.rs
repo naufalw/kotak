@@ -53,9 +53,13 @@ impl FirecrackerClient {
         let io = TokioIo::new(stream);
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::spawn(conn);
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::warn!("firecracker http connection error: {}", e);
+            }
+        });
 
-        let body_str = serde_json::to_string(&body).unwrap();
+        let body_str = serde_json::to_string(&body)?;
         let req = Request::builder()
             .method(Method::PUT)
             .uri(format!("http://localhost{}", path))
@@ -148,7 +152,6 @@ impl FirecrackerClient {
             match TcpStream::connect(&addr).await {
                 Ok(_) => {
                     tracing::info!("VM ready after {} attempts", attempt);
-                    tracing::info!("VM is up at {}", guest_ip);
                     return Ok(());
                 }
                 Err(_) => {
@@ -157,7 +160,7 @@ impl FirecrackerClient {
                 }
             }
         }
-        Ok(())
+        Err(anyhow::anyhow!("VM at {} did not become ready after 30 attempts", guest_ip))
     }
 
     pub async fn stop(&self) -> Result<()> {

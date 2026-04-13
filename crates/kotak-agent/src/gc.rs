@@ -12,7 +12,7 @@ pub fn start_gc(state: Arc<AppState>, idle_secs: u64) {
 
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
 
             let idle: Vec<String> = {

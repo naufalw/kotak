@@ -86,9 +86,13 @@ impl SnapshotStore {
             "zstd",
             "-q",
             "-T0",
-            rootfs_path.to_str().unwrap(),
+            rootfs_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 rootfs path"))?,
             "-o",
-            archive_path.to_str().unwrap(),
+            archive_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 archive path"))?,
         ])
         .await?;
 
@@ -108,9 +112,13 @@ impl SnapshotStore {
             "-d",
             "-q",
             "-f",
-            archive_path.to_str().unwrap(),
+            archive_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 archive path"))?,
             "-o",
-            dest_rootfs.to_str().unwrap(),
+            dest_rootfs
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 dest rootfs path"))?,
         ])
         .await?;
 

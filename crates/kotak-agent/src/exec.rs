@@ -13,8 +13,8 @@ pub async fn handle_exec(stream: &mut (impl AsyncWriteExt + Unpin), command: &st
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take().expect("stdout pipe missing despite Stdio::piped()");
+    let stderr = child.stderr.take().expect("stderr pipe missing despite Stdio::piped()");
 
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
