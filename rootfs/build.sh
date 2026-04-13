@@ -83,6 +83,10 @@ EOF
 sudo chmod +x $MOUNT/etc/init.d/kotak-guest
 sudo ln -s /etc/init.d/kotak-guest "$MOUNT/etc/runlevels/default/kotak-guest"
 
+echo "==> build kotak-guest"
+cd /home/naufal/kotak && cargo build -p kotak-guest --release --target x86_64-unknown-linux-musl
+cd /home/naufal/kotak/rootfs
+
 echo "==> copy guest bin"
 sudo cp "/home/naufal/kotak/target/x86_64-unknown-linux-musl/release/kotak-guest" $MOUNT/usr/local/bin/kotak-guest
 sudo chmod +x $MOUNT/usr/local/bin/kotak-guest
