@@ -37,11 +37,12 @@ where
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
 
+    let raw = String::from_utf8_lossy(&buf);
+    tracing::info!("request: {}", raw);
+
     let request: Request = serde_json::from_slice(&buf)?;
     match request {
-        Request::Exec { command } => {
-            handle_exec(stream, &command).await?;
-        }
+        Request::Exec { command } => handle_exec(stream, &command).await?,
         Request::Mkdir { path } => handle_mkdir(stream, &path).await?,
         Request::ReadFile { path } => handle_read_file(stream, &path).await?,
         Request::WriteFile { path, content } => handle_create_file(stream, &path, &content).await?,
@@ -50,19 +51,8 @@ where
     Ok(())
 }
 
-// #[derive(serde::Deserialize, Debug)]
-// struct ExecRequest {
-//     command: String,
-// }
-
-// #[derive(serde::Serialize)]
-// struct ExecResponse {
-//     stdout: String,
-//     stderr: String,
-//     exit_code: i32,
-// }
-
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum Request {
     Exec { command: String },
     WriteFile { path: String, content: String },
