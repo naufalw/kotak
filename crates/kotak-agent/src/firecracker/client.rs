@@ -31,6 +31,7 @@ impl FirecrackerClient {
             "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init random.trust_cpu=on ip={}::{}:255.255.255.0::eth0:off",
             config.guest_ip, config.gateway_ip
         );
+        self.configure_machine(2, 4096).await?;
         self.configure_boot(config.kernel_path, &boot_args).await?;
         self.configure_drive(config.rootfs_path).await?;
         self.configure_network(config.tap_name, config.mac).await?;
@@ -89,6 +90,17 @@ impl FirecrackerClient {
                             "path_on_host": rootfs_path,
                             "is_root_device": true,
                             "is_read_only": false
+            }),
+        )
+        .await
+    }
+
+    pub async fn configure_machine(&self, vcpus: u8, memory_mb: u32) -> Result<()> {
+        self.put(
+            "/machine-config",
+            json!({
+                "vcpu_count": vcpus,
+                "mem_size_mib": memory_mb
             }),
         )
         .await
