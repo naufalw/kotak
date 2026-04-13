@@ -1433,6 +1433,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "axum",
+ "base64",
  "futures-util",
  "http-body-util",
  "hyper 1.9.0",

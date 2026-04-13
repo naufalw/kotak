@@ -126,6 +126,8 @@ impl Sandbox {
         })
     }
 
+    // command sending
+
     pub async fn exec(&self, command: &str) -> Result<ExecResponse> {
         self.touch();
         self.vsock.exec(command).await
@@ -135,6 +137,23 @@ impl Sandbox {
         self.touch();
         self.vsock.exec_stream(command).await
     }
+
+    pub async fn write_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        self.touch();
+        self.vsock.write_file(path, content).await
+    }
+
+    pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        self.touch();
+        self.vsock.read_file(path).await
+    }
+
+    pub async fn mkdir(&self, path: &str) -> Result<()> {
+        self.touch();
+        self.vsock.mkdir(path).await
+    }
+
+    // end of command sending
 
     pub async fn hibernate(
         self,

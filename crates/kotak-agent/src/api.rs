@@ -2,7 +2,7 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{
         IntoResponse,
         sse::{Event, Sse},
@@ -40,6 +40,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sandboxes/{id}", delete(delete_sandbox))
         .route("/sandboxes/{id}/exec", post(exec_sandbox))
         .route("/sandboxes/{id}/exec/stream", post(exec_stream_sandbox))
+        .route("/sandboxes/{id}/files", post(write_file))
+        .route("/sandboxes/{id}/files", get(read_file))
+        .route("/sandboxes/{id}/mkdir", post(mkdir_sandbox))
         .route("/sandboxes/{id}/hibernate", post(hibernate_sandbox))
         .route("/sandboxes/{id}/ports/{port}", post(forward_port))
         .route("/sandboxes/{id}/ports/{port}", delete(remove_port))
@@ -71,6 +74,16 @@ struct ExecResponse {
 struct PortForwardResponse {
     guest_port: u16,
     host_port: u16,
+}
+
+#[derive(Deserialize)]
+struct FileQuery {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct MkdirRequest {
+    path: String,
 }
 
 // handlers
@@ -165,6 +178,57 @@ async fn exec_stream_sandbox(
             Sse::new(stream).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn write_file(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    let sandboxes = state.sandboxes.read().await;
+    match sandboxes.get(&id) {
+        Some(s) => match s.write_file(&query.path, &body).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn read_file(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> axum::response::Response {
+    let sandboxes = state.sandboxes.read().await;
+    match sandboxes.get(&id) {
+        Some(s) => match s.read_file(&query.path).await {
+            Ok(bytes) => (
+                StatusCode::OK,
+                [("content-type", "application/octet-stream")],
+                bytes,
+            )
+                .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn mkdir_sandbox(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<MkdirRequest>,
+) -> axum::response::Response {
+    let sandboxes = state.sandboxes.read().await;
+    match sandboxes.get(&id) {
+        Some(s) => match s.mkdir(&body.path).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
