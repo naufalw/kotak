@@ -1,8 +1,6 @@
 use anyhow::Result;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::Command,
-};
+use kotak_guest::handlers::{handle_create_file, handle_exec, handle_mkdir, handle_read_file};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 
 const AGENT_PORT: u32 = 52;
@@ -38,60 +36,36 @@ where
     let len = u32::from_be_bytes(len_buf) as usize;
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
-    let request: ExecRequest = serde_json::from_slice(&buf)?;
-    tracing::info!("exec: {:?}", request.command);
 
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&request.command)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-
-    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
-
-    loop {
-        tokio::select! {
-            line = stdout.next_line() => {
-                match line? {
-                    Some(l) => send_chunk(stream, serde_json::json!({"type": "stdout", "data": l + "\n"})).await?,
-                    None => break,
-                }
-            }
-            line = stderr.next_line() => {
-                if let Some(l) = line? { send_chunk(stream, serde_json::json!({"type": "stderr", "data": l + "\n"})).await? }
-            }
+    let request: Request = serde_json::from_slice(&buf)?;
+    match request {
+        Request::Exec { command } => {
+            handle_exec(stream, &command).await?;
         }
+        Request::Mkdir { path } => handle_mkdir(stream, &path).await?,
+        Request::ReadFile { path } => handle_read_file(stream, &path).await?,
+        Request::WriteFile { path, content } => handle_create_file(stream, &path, &content).await?,
     }
 
-    let status = child.wait().await?;
-    let code = status.code().unwrap_or(-1);
-    send_chunk(stream, serde_json::json!({"type": "exit", "code": code})).await?;
-
     Ok(())
 }
 
-async fn send_chunk<S>(stream: &mut S, value: serde_json::Value) -> Result<()>
-where
-    S: AsyncWriteExt + Unpin,
-{
-    let bytes = serde_json::to_vec(&value)?;
-    let len = (bytes.len() as u32).to_be_bytes();
-    stream.write_all(&len).await?;
-    stream.write_all(&bytes).await?;
-    stream.flush().await?;
-    Ok(())
-}
+// #[derive(serde::Deserialize, Debug)]
+// struct ExecRequest {
+//     command: String,
+// }
 
-#[derive(serde::Deserialize, Debug)]
-struct ExecRequest {
-    command: String,
-}
+// #[derive(serde::Serialize)]
+// struct ExecResponse {
+//     stdout: String,
+//     stderr: String,
+//     exit_code: i32,
+// }
 
-#[derive(serde::Serialize)]
-struct ExecResponse {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
+#[derive(serde::Deserialize)]
+enum Request {
+    Exec { command: String },
+    WriteFile { path: String, content: String },
+    ReadFile { path: String },
+    Mkdir { path: String },
 }
